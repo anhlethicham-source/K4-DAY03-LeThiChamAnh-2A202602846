@@ -1,0 +1,37 @@
+[
+  {
+    "id": "TC01",
+    "type": "doctor_list_query",
+    "question": "Hãy liệt kê các bác sĩ chuyên khoa Da liễu đang có trên hệ thống.",
+    "expected_behavior": "Agent gọi doctor_query với specialty='Da liễu' và chỉ trả thông tin có trong Observation.",
+    "complexity": "Low"
+  },
+  {
+    "id": "TC02",
+    "type": "single_tool_query",
+    "question": "Hãy tra cứu thông tin về bác sĩ Nguyễn Văn A.",
+    "expected_behavior": "Agent gọi doctor_query với doctor_name='Nguyễn Văn A'.",
+    "complexity": "Medium"
+  },
+  {
+    "id": "TC03",
+    "type": "appointment_booking",
+    "question": "Đặt lịch khám da liễu cho bệnh nhân BN2026001 với PGS.TS Nguyễn Văn A lúc 10:00 ngày 15/09/2026.",
+    "expected_behavior": "Agent gọi schedule_appointment với đúng bệnh nhân, bác sĩ và thời gian; hệ thống trả mã đặt lịch.",
+    "complexity": "Medium"
+  },
+  {
+    "id": "TC04",
+    "type": "multi_step_reasoning",
+    "question": "Kiểm tra lịch trống của PGS.TS Nguyễn Văn A ngày 15/09/2026 và nếu còn lịch, hãy đặt khung giờ sớm nhất cho bệnh nhân BN2026002.",
+    "expected_behavior": "Agent gọi doctor_schedule_query, quan sát các slot, rồi gọi schedule_appointment với slot sớm nhất trước khi trả lời.",
+    "complexity": "High"
+  },
+  {
+    "id": "TC05",
+    "type": "edge_case_handling",
+    "question": "Tra giúp tôi các lịch khám của bệnh nhân có mã BN9999999.",
+    "expected_behavior": "Agent gọi patient_appointment_query, nhận NOT_FOUND và không bịa dữ liệu.",
+    "complexity": "Medium"
+  }
+]

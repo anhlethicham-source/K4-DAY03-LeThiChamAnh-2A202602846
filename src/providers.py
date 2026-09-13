@@ -6,6 +6,8 @@ Hỗ trợ Native Tool Calling và chuyển đổi linh hoạt qua biến môi t
 import os
 import sys
 import json
+import re
+import unicodedata
 from typing import Dict, Any, List
 from dotenv import load_dotenv
 
@@ -32,32 +34,86 @@ class MockOfflineProvider(BaseLLMProvider):
         self.model_name = "Offline-Mock-Model-2026"
 
     def generate(self, prompt: str, system_prompt: str = "") -> str:
-        return f"[Mock Chatbot Response]: Xin chào! Tôi đã nhận được câu hỏi '{prompt}'. (Chế độ Chatbot không có Tool tra cứu dữ liệu thời gian thực)."
+        return "[Mock Chatbot Response]: Tôi có thể hướng dẫn thông tin chung về dịch vụ khám Vinmec."
 
     def generate_with_tools(self, prompt: str, tools_schema: List[Dict[str, Any]], system_prompt: str = "") -> Dict[str, Any]:
-        prompt_lower = prompt.lower()
-        
-        # Mô phỏng nhận diện intent gọi Tool
-        if "sv2026001" in prompt_lower and "đặt lịch" in prompt_lower:
+        normalized = unicodedata.normalize("NFD", prompt.casefold())
+        prompt_lower = "".join(c for c in normalized if unicodedata.category(c) != "Mn").replace("đ", "d")
+        patient_match = re.search(r"bn\d+", prompt_lower)
+        patient_id = patient_match.group(0).upper() if patient_match else ""
+
+        if "ket qua tool schedule_appointment" in prompt_lower:
+            return {
+                "type": "text",
+                "content": "Đã hoàn tất xử lý yêu cầu đặt lịch khám theo kết quả từ hệ thống.",
+                "thought": "Công cụ đặt lịch đã trả kết quả; tổng hợp phản hồi cho bệnh nhân."
+            }
+
+        if "ket qua tool doctor_schedule_query" in prompt_lower and "som nhat" in prompt_lower:
+            slot_match = re.search(r'"available_slots"\s*:\s*\[\s*"([0-9:]+)"', prompt)
+            slot = slot_match.group(1) if slot_match else "09:00"
             return {
                 "type": "tool_call",
                 "tool_name": "schedule_appointment",
-                "arguments": {"student_id": "SV2026001", "datetime_str": "14:00 15/09/2026", "advisor_name": "PGS.TS Nguyễn Văn A"},
-                "thought": "Người dùng yêu cầu đặt lịch hẹn tư vấn cho sinh viên SV2026001. Tôi sẽ gọi tool schedule_appointment."
+                "arguments": {"patient_id": patient_id or "BN2026002", "doctor_name": "PGS.TS Nguyễn Văn A", "datetime_str": f"{slot} 15/09/2026", "reason": "Khám da liễu"},
+                "thought": "Đã có lịch trống; chọn khung giờ sớm nhất theo yêu cầu."
             }
-        elif "sv2026001" in prompt_lower or "tra cứu" in prompt_lower:
-            return {
-                "type": "tool_call",
-                "tool_name": "academic_query",
-                "arguments": {"student_id": "SV2026001"},
-                "thought": "Người dùng muốn tra cứu thông tin học vụ của sinh viên SV2026001. Tôi sẽ gọi tool academic_query."
-            }
-        else:
+
+        if "ket qua tool" in prompt_lower:
+            result_match = re.search(r"KẾT QUẢ TOOL [^:]+:\s*(\{.*\})", prompt, re.DOTALL)
+            result_text = result_match.group(1) if result_match else "kết quả vừa nhận"
             return {
                 "type": "text",
-                "content": f"[Mock Agent Response]: Xin chào! Quy chế học vụ VinUni yêu cầu sinh viên tích lũy tối thiểu 120 tín chỉ và duy trì GPA trên 2.0 để tốt nghiệp.",
-                "thought": "Câu hỏi chung về quy chế học vụ, trả lời trực tiếp không cần gọi Tool."
+                "content": f"Kết quả từ hệ thống: {result_text}",
+                "thought": "Đã có observation từ công cụ; tổng hợp và trả lời người dùng."
             }
+
+        if patient_id and ("lich hen" in prompt_lower or "lich kham" in prompt_lower) and "dat lich" not in prompt_lower:
+            return {
+                "type": "tool_call",
+                "tool_name": "patient_appointment_query",
+                "arguments": {"patient_id": patient_id},
+                "thought": "Cần tra cứu lịch khám theo mã bệnh nhân."
+            }
+
+        if "som nhat" in prompt_lower and ("lich trong" in prompt_lower or "kiem tra lich" in prompt_lower):
+            return {
+                "type": "tool_call",
+                "tool_name": "doctor_schedule_query",
+                "arguments": {"doctor_name": "PGS.TS Nguyễn Văn A", "date": "15/09/2026"},
+                "thought": "Cần xem lịch trống trước khi chọn giờ sớm nhất."
+            }
+
+        if "dat lich" in prompt_lower and patient_id:
+            return {
+                "type": "tool_call",
+                "tool_name": "schedule_appointment",
+                "arguments": {"patient_id": patient_id, "doctor_name": "PGS.TS Nguyễn Văn A", "datetime_str": "10:00 15/09/2026", "reason": "Khám da liễu"},
+                "thought": "Người dùng đã cung cấp đủ thông tin để đặt lịch khám."
+            }
+
+        if "lich trong" in prompt_lower or "lich lam viec" in prompt_lower:
+            return {
+                "type": "tool_call",
+                "tool_name": "doctor_schedule_query",
+                "arguments": {"doctor_name": "PGS.TS Nguyễn Văn A", "date": "15/09/2026"},
+                "thought": "Cần tra cứu lịch trống của bác sĩ."
+            }
+
+        if "bac si" in prompt_lower or "da lieu" in prompt_lower:
+            arguments = {"doctor_name": "Nguyễn Văn A"} if "nguyen van a" in prompt_lower else {"specialty": "Da liễu"}
+            return {
+                "type": "tool_call",
+                "tool_name": "doctor_query",
+                "arguments": arguments,
+                "thought": "Cần tra cứu danh mục bác sĩ từ dữ liệu công cụ."
+            }
+
+        return {
+            "type": "text",
+            "content": "Tôi có thể hỗ trợ tra cứu bác sĩ, xem lịch trống và đặt lịch khám Vinmec.",
+            "thought": "Câu hỏi chung, không cần gọi công cụ."
+        }
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -131,14 +187,14 @@ class GeminiProvider(BaseLLMProvider):
                 }
 
         except Exception as e:
-            print(f"⚠️ [Gemini API Warning]: Không thể kết nối live API ({str(e)}). Tự động fallback về Mock.")
-            return MockOfflineProvider().generate_with_tools(prompt, tools_schema, system_prompt)
+            return {"type": "text", "content": f"Không thể kết nối Gemini API: {str(e)}", "thought": "Live API gặp lỗi; không dùng Mock để tránh tạo bằng chứng nghiệm thu sai."}
 
 
 class OpenAIProvider(BaseLLMProvider):
-    """OpenAI Provider (Native Tool Calling với OpenAI SDK)"""
-    def __init__(self, api_key: str = None, model: str = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+    """OpenAI-compatible Provider cho OpenAI hoặc OpenRouter."""
+    def __init__(self, api_key: str = None, model: str = None, base_url: str = None):
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+        self.base_url = base_url or os.getenv("OPENAI_BASE_URL")
         self.model_name = model or os.getenv("LLM_MODEL") or "gpt-4o-mini"
 
     def generate(self, prompt: str, system_prompt: str = "") -> str:
@@ -146,7 +202,7 @@ class OpenAIProvider(BaseLLMProvider):
             return "[OpenAI Error]: Chưa cấu hình OPENAI_API_KEY trong file .env! Đang sử dụng chế độ Mock."
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=self.api_key)
+            client = OpenAI(api_key=self.api_key, base_url=self.base_url)
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
@@ -163,7 +219,7 @@ class OpenAIProvider(BaseLLMProvider):
 
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=self.api_key)
+            client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
             tools = []
             for tool in tools_schema:
@@ -207,8 +263,7 @@ class OpenAIProvider(BaseLLMProvider):
                     "thought": "OpenAI phản hồi trực tiếp bằng văn bản (không cần gọi công cụ)."
                 }
         except Exception as e:
-            print(f"⚠️ [OpenAI API Warning]: Không thể kết nối live API ({str(e)}). Tự động fallback về Mock.")
-            return MockOfflineProvider().generate_with_tools(prompt, tools_schema, system_prompt)
+            return {"type": "text", "content": f"Không thể kết nối OpenAI API: {str(e)}", "thought": "Live API gặp lỗi; không dùng Mock để tránh tạo bằng chứng nghiệm thu sai."}
 
 
 def get_llm_provider() -> BaseLLMProvider:
@@ -227,6 +282,15 @@ def get_llm_provider() -> BaseLLMProvider:
             return OpenAIProvider()
         else:
             return MockOfflineProvider()
+    elif provider_type == "openrouter":
+        key = os.getenv("OPENROUTER_API_KEY")
+        if key and key != "your_openrouter_api_key_here":
+            return OpenAIProvider(
+                api_key=key,
+                base_url="https://openrouter.ai/api/v1",
+                model=os.getenv("LLM_MODEL") or "openai/gpt-4o-mini"
+            )
+        return MockOfflineProvider()
     elif provider_type == "mock":
         return MockOfflineProvider()
     else:
